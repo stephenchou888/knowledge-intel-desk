@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "description": "知识库信息核查 — 多格式解析、自定义多模型初筛与 11 列 CSV 导出桌面端与网页端",
   "author": "Knowledge Intel Desk",
+  "license": "MIT",
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
