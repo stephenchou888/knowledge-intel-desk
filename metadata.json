@@ -1,0 +1,6 @@
+{
+  "name": "内容精分",
+  "description": "极简文本与图片分类工具，基于 Gemini Decisions API 瞬间识别高价值干货、普通日常与垃圾广告。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

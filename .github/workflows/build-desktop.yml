@@ -1,0 +1,115 @@
+name: Build Desktop (Windows & macOS)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "可选：手动发布 Release 标签（例如 v1.0.0；留空则仅上传 Actions 构建产物 Artifact）"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck & Web Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Run TypeScript check
+        run: npm run lint
+
+      - name: Build web frontend & bundled server
+        run: npm run build:desktop-assets
+
+  build-desktop:
+    name: Build ${{ matrix.os_label }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            os_label: Windows (x64 NSIS & Portable)
+            build_cmd: npm run desktop:build:win
+            artifact_name: KnowledgeIntelDesk-Windows
+          - os: macos-latest
+            os_label: macOS (Apple Silicon & Intel DMG/ZIP)
+            build_cmd: npm run desktop:build:mac
+            artifact_name: KnowledgeIntelDesk-macOS
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build desktop installer
+        env:
+          # Disable automatic code signing discovery when no signing cert is configured
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ${{ matrix.build_cmd }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            release/*.exe
+            release/*.dmg
+            release/*.zip
+            release/*.blockmap
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: build-desktop
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all desktop artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List release assets
+        run: ls -lh artifacts
+
+      - name: Create GitHub Release & attach installers
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}
+          name: "知识库信息核查 ${{ inputs.release_tag != '' && inputs.release_tag || github.ref_name }}"
+          generate_release_notes: true
+          files: |
+            artifacts/*.exe
+            artifacts/*.dmg
+            artifacts/*.zip

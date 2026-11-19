@@ -1,0 +1,55 @@
+appId: com.knowledgeintel.desk
+productName: KnowledgeIntelDesk
+copyright: Copyright © 2026 Knowledge Intel Desk
+
+directories:
+  output: release
+  buildResources: build-resources
+
+asar: true
+
+files:
+  - "dist/**/*"
+  - "dist-server/**/*"
+  - "electron/**/*"
+  - "build-resources/icon.png"
+  - ".env.example"
+  - "package.json"
+
+mac:
+  category: public.app-category.productivity
+  icon: build-resources/icon.png
+  identity: null
+  artifactName: "${productName}-${version}-mac-${arch}.${ext}"
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
+      arch:
+        - arm64
+        - x64
+
+dmg:
+  title: "知识库信息核查 ${version}"
+
+win:
+  icon: build-resources/icon.png
+  artifactName: "${productName}-${version}-win-${arch}-${target}.${ext}"
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  deleteAppDataOnUninstall: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: "知识库信息核查"
