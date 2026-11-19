@@ -36,7 +36,6 @@ dmg:
 
 win:
   icon: build-resources/icon.png
-  artifactName: "${productName}-${version}-win-${arch}-${target}.${ext}"
   target:
     - target: nsis
       arch:
@@ -46,6 +45,7 @@ win:
         - x64
 
 nsis:
+  artifactName: "${productName}-${version}-win-${arch}-setup.${ext}"
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
@@ -53,3 +53,6 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: "知识库信息核查"
+
+portable:
+  artifactName: "${productName}-${version}-win-${arch}-portable.${ext}"
