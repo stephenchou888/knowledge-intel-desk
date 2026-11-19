@@ -9,10 +9,12 @@ import {
   Loader2,
   Plus,
   RefreshCw,
+  Save,
   Search,
   Server,
   ShieldCheck,
   Trash2,
+  X,
   XCircle,
   Zap,
 } from "lucide-react";
@@ -63,13 +65,13 @@ const PRESET_ENV_KEYS = [
 const ENV_VAR_REGEX = /^[A-Z][A-Z0-9_]{1,63}$/;
 
 interface EndpointDraft {
-  id: string | null;
   name: string;
   provider: ProviderId;
   protocol: ApiProtocol;
   baseUrl: string;
   modelId: string;
   envKeyName: string;
+  useCustomEnvName: boolean;
   enableSearch: boolean;
   thinkingLevel: ThinkingDepth;
   notes: string;
@@ -85,17 +87,183 @@ function createDraftFromProvider(
       ? tpl.triageSuggestedModels
       : tpl.suggestedModels;
   return {
-    id: null,
     name: `${tpl.label}${stage === "triage" ? "初筛" : "核查"}接口`,
     provider: tpl.id,
     protocol: tpl.defaultProtocol,
     baseUrl: tpl.defaultBaseUrl,
     modelId: modelList[0] ?? "",
     envKeyName: tpl.defaultEnvKey,
+    useCustomEnvName: false,
     enableSearch: stage === "verify" && tpl.id === "gemini",
     thinkingLevel: "low",
     notes: "",
   };
+}
+
+function draftFromExistingEndpoint(ep: CustomModelEndpoint): EndpointDraft {
+  const envUpper = (ep.envKeyName || "").trim().toUpperCase();
+  const isPreset = (PRESET_ENV_KEYS as readonly string[]).includes(envUpper);
+  return {
+    name: ep.name,
+    provider: ep.provider,
+    protocol: ep.protocol,
+    baseUrl: ep.baseUrl,
+    modelId: ep.modelId,
+    envKeyName: envUpper,
+    useCustomEnvName: !isPreset,
+    enableSearch: Boolean(ep.enableSearch),
+    thinkingLevel: ep.thinkingLevel ?? "low",
+    notes: ep.notes ?? "",
+  };
+}
+
+function validateEndpointDraft(draft: EndpointDraft): {
+  error?: string;
+  cleaned?: {
+    name: string;
+    baseUrl: string;
+    modelId: string;
+    envKeyName: string;
+  };
+} {
+  const name = draft.name.trim();
+  const baseUrl = draft.baseUrl.trim().replace(/\/+$/, "");
+  const modelId = draft.modelId.trim();
+  const envKeyName = draft.envKeyName.trim().toUpperCase();
+
+  if (!name) return { error: "请填写接口显示名称。" };
+  if (!baseUrl || !/^https?:\/\/.+/i.test(baseUrl)) {
+    return { error: "请填写有效的 Base URL（必须以 https:// 或 http:// 开头）。" };
+  }
+  if (!modelId) return { error: "请填写需要调用的模型 ID（Model ID）。" };
+  if (envKeyName !== "NONE" && !ENV_VAR_REGEX.test(envKeyName)) {
+    return {
+      error:
+        "环境变量名仅支持大写字母、数字和下划线（如 JEV_API_KEY），不能在此处填入明文 API Key；本地免密钥服务请选择 NONE。",
+    };
+  }
+  return { cleaned: { name, baseUrl, modelId, envKeyName } };
+}
+
+interface SecretEnvBindingBlockProps {
+  idPrefix: string;
+  envKeyName: string;
+  useCustomEnvName: boolean;
+  envStatus: Record<string, boolean>;
+  onChange: (nextEnvKeyName: string, nextUseCustom: boolean) => void;
+}
+
+function SecretEnvBindingBlock({
+  idPrefix,
+  envKeyName,
+  useCustomEnvName,
+  envStatus,
+  onChange,
+}: SecretEnvBindingBlockProps) {
+  const upper = envKeyName.trim().toUpperCase();
+  const isKeyless = upper === "NONE";
+  const isReady = isKeyless ? true : Boolean(envStatus[upper]);
+
+  return (
+    <div className="space-y-2.5 rounded-lg border border-border bg-muted/20 p-3.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <label
+          htmlFor={`${idPrefix}-env-select`}
+          className="flex items-center gap-1.5 text-xs font-semibold text-foreground"
+        >
+          <ShieldCheck
+            className="size-3.5 text-emerald-500"
+            aria-hidden="true"
+          />
+          服务端密钥环境变量绑定（安全代理 · 不存储明文密钥）
+        </label>
+        {isKeyless ? (
+          <span className="font-mono text-[11px] text-sky-600 dark:text-sky-400">
+            本地免鉴权模式 (NONE)
+          </span>
+        ) : isReady ? (
+          <span className="inline-flex items-center gap-1 font-mono text-[11px] text-emerald-600 dark:text-emerald-400">
+            <CheckCircle2 className="size-3" />
+            已就绪：{upper}
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 font-mono text-[11px] text-amber-600 dark:text-amber-400">
+            <XCircle className="size-3" />
+            未检测到有效密钥：{upper || "未指定"}
+          </span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 gap-2.5 md:grid-cols-12">
+        <div className="md:col-span-5">
+          <select
+            id={`${idPrefix}-env-select`}
+            aria-label="选择服务端环境变量名"
+            value={useCustomEnvName ? "__custom__" : upper}
+            onChange={(e) => {
+              if (e.target.value === "__custom__") {
+                onChange(
+                  (PRESET_ENV_KEYS as readonly string[]).includes(upper)
+                    ? "CUSTOM_LLM_API_KEY"
+                    : upper,
+                  true
+                );
+              } else {
+                onChange(e.target.value, false);
+              }
+            }}
+            className="h-9 w-full rounded-md border border-input bg-background px-2.5 font-mono text-xs text-foreground outline-none focus:border-ring"
+          >
+            <option value="JEV_API_KEY">JEV_API_KEY (JEV 决策模型)</option>
+            <option value="OPENAI_API_KEY">OPENAI_API_KEY (OpenAI)</option>
+            <option value="GEMINI_API_KEY">GEMINI_API_KEY (Gemini)</option>
+            <option value="ANTHROPIC_API_KEY">ANTHROPIC_API_KEY (Claude)</option>
+            <option value="DEEPSEEK_API_KEY">DEEPSEEK_API_KEY (DeepSeek)</option>
+            <option value="GLM_API_KEY">GLM_API_KEY (智谱 GLM)</option>
+            <option value="KIMI_API_KEY">KIMI_API_KEY (月之暗面 Kimi)</option>
+            <option value="TENCENT_API_KEY">TENCENT_API_KEY (腾讯混元)</option>
+            <option value="CUSTOM_LLM_API_KEY">CUSTOM_LLM_API_KEY (其它通用)</option>
+            <option value="NONE">NONE (本地 Ollama / 免密钥)</option>
+            <option value="__custom__">自定义环境变量名…</option>
+          </select>
+        </div>
+
+        <div className="md:col-span-7">
+          {useCustomEnvName ? (
+            <Input
+              id={`${idPrefix}-custom-env`}
+              value={envKeyName}
+              onChange={(e) =>
+                onChange(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""), true)
+              }
+              placeholder="仅填写环境变量名（如 MY_OPENROUTER_KEY），勿填密钥本身"
+              className="h-9 font-mono text-xs uppercase"
+            />
+          ) : (
+            <div className="flex min-h-9 items-center rounded-md border border-border/80 bg-background/60 px-3 py-1.5 text-[11px] leading-snug text-muted-foreground">
+              {isKeyless ? (
+                <span>
+                  当前为免密钥模式，将直接向 Base URL 发起无鉴权请求（适用于本地 Ollama / vLLM）。
+                </span>
+              ) : isReady ? (
+                <span>
+                  服务端已安全注入 <strong className="font-mono text-foreground">{upper}</strong>，可直接调用与测试连通性。
+                </span>
+              ) : (
+                <span>
+                  为防止浏览器泄露 API Key，前端不提供明文密钥框。请前往{" "}
+                  <strong className="text-foreground">Settings &gt; Secrets</strong>
+                  （桌面端点击顶部菜单{" "}
+                  <strong className="text-foreground">配置与密钥 → 打开 .env</strong>）配置{" "}
+                  <strong className="font-mono text-foreground">{upper}</strong> 后重载生效。
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 interface StageEndpointPanelProps {
@@ -106,7 +274,6 @@ interface StageEndpointPanelProps {
   draft: EndpointDraft;
   onDraftChange: (updater: (prev: EndpointDraft) => EndpointDraft) => void;
   onSelectProvider: (providerId: ProviderId) => void;
-  onCancelEdit: () => void;
   onSubmit: (bindImmediately: boolean) => void;
   formError: string | null;
   envStatus: Record<string, boolean>;
@@ -123,7 +290,6 @@ function StageEndpointPanel({
   draft,
   onDraftChange,
   onSelectProvider,
-  onCancelEdit,
   onSubmit,
   formError,
   envStatus,
@@ -132,19 +298,15 @@ function StageEndpointPanel({
   onChangeBoundEndpointId,
 }: StageEndpointPanelProps) {
   const isTriage = stage === "triage";
-  const currentTpl = PROVIDER_MAP[draft.provider];
+  const currentTpl = PROVIDER_MAP[draft.provider] ?? PROVIDER_MAP.other;
   const suggestedModels =
     isTriage && currentTpl.triageSuggestedModels?.length
       ? currentTpl.triageSuggestedModels
       : currentTpl.suggestedModels;
-  const draftEnvUpper = draft.envKeyName.trim().toUpperCase();
-  const isDraftEnvReady =
-    draftEnvUpper === "NONE" ? true : Boolean(envStatus[draftEnvUpper]);
   const boundEndpoint = endpoints.find((e) => e.id === boundEndpointId);
 
   return (
     <Card className="gap-0 overflow-hidden rounded-xl border border-border bg-card py-0 shadow-none ring-0">
-      {/* Panel Header + Current Stage Active Binding */}
       <CardHeader className="flex flex-col gap-3 border-b border-border px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="space-y-0.5">
           <div className="flex items-center gap-2">
@@ -154,11 +316,6 @@ function StageEndpointPanel({
               <Search className="size-4 text-sky-500" aria-hidden="true" />
             )}
             <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-            {draft.id && (
-              <span className="rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
-                编辑模式
-              </span>
-            )}
           </div>
           <p className="text-xs text-muted-foreground">{subtitle}</p>
         </div>
@@ -180,7 +337,8 @@ function StageEndpointPanel({
             </option>
             {endpoints.map((ep) => (
               <option key={ep.id} value={ep.id}>
-                [{(PROVIDER_MAP[ep.provider] ?? PROVIDER_MAP.other).shortTag}] {ep.name} · {ep.modelId}
+                [{(PROVIDER_MAP[ep.provider] ?? PROVIDER_MAP.other).shortTag}] {ep.name} ·{" "}
+                {ep.modelId}
               </option>
             ))}
           </select>
@@ -199,23 +357,9 @@ function StageEndpointPanel({
       <CardContent className="space-y-4 p-5">
         {/* Provider Quick-Select Strip */}
         <div className="space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-medium text-muted-foreground">
-              选择厂商模板（一键填充官方默认地址与协议，下方可任意自定义修改）
-            </span>
-            {draft.id && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={onCancelEdit}
-                className="h-7 px-2 text-xs text-muted-foreground"
-              >
-                退出编辑
-              </Button>
-            )}
-          </div>
-
+          <span className="text-xs font-medium text-muted-foreground">
+            选择厂商模板（已更新至最新一代模型，一键填充默认地址与协议，下方可任意自定义修改）
+          </span>
           <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-9">
             {providers.map((tpl) => {
               const selected = draft.provider === tpl.id;
@@ -244,7 +388,7 @@ function StageEndpointPanel({
                       title={
                         envReady
                           ? `${tpl.defaultEnvKey} 已就绪`
-                          : `${tpl.defaultEnvKey} 待配置`
+                          : `${tpl.defaultEnvKey} 未配置有效密钥`
                       }
                     />
                   </div>
@@ -273,7 +417,7 @@ function StageEndpointPanel({
                 onDraftChange((prev) => ({ ...prev, name: e.target.value }))
               }
               placeholder={
-                isTriage ? "例如：JEV 极速初筛网关" : "例如：DeepSeek 深度核查"
+                isTriage ? "例如：JEV 极速初筛网关" : "例如：GPT-6.2 深度核查"
               }
               className="h-9 text-xs"
             />
@@ -364,10 +508,10 @@ function StageEndpointPanel({
           </div>
         </div>
 
-        {/* Suggested Model Chips */}
+        {/* Latest Model Chips */}
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-[11px] text-muted-foreground">
-            {currentTpl.label} 常用模型参考：
+            {currentTpl.label} 最新推荐模型：
           </span>
           {suggestedModels.map((m) => (
             <button
@@ -387,81 +531,19 @@ function StageEndpointPanel({
           ))}
         </div>
 
-        {/* Server-Side Secrets Variable Binding */}
-        <div className="space-y-2 rounded-lg border border-border bg-muted/20 p-3.5">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <label
-              htmlFor={`${stage}-env-key`}
-              className="flex items-center gap-1.5 text-xs font-semibold text-foreground"
-            >
-              <ShieldCheck
-                className="size-3.5 text-emerald-500"
-                aria-hidden="true"
-              />
-              服务端密钥环境变量名（安全代理）
-            </label>
-            {draftEnvUpper === "NONE" ? (
-              <span className="font-mono text-[11px] text-sky-600 dark:text-sky-400">
-                本地免鉴权模式 (NONE)
-              </span>
-            ) : isDraftEnvReady ? (
-              <span className="inline-flex items-center gap-1 font-mono text-[11px] text-emerald-600 dark:text-emerald-400">
-                <CheckCircle2 className="size-3" />
-                Secrets 已就绪：{draftEnvUpper}
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1 font-mono text-[11px] text-amber-600 dark:text-amber-400">
-                <XCircle className="size-3" />
-                需在 Settings &gt; Secrets 添加 {draftEnvUpper || "环境变量"}
-              </span>
-            )}
-          </div>
-
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <select
-              aria-label="选择服务端 Secrets 环境变量名"
-              value={
-                (PRESET_ENV_KEYS as readonly string[]).includes(draftEnvUpper)
-                  ? draftEnvUpper
-                  : "__custom__"
-              }
-              onChange={(e) => {
-                if (e.target.value !== "__custom__") {
-                  onDraftChange((prev) => ({
-                    ...prev,
-                    envKeyName: e.target.value,
-                  }));
-                }
-              }}
-              className="h-9 rounded-md border border-input bg-background px-2.5 font-mono text-xs text-foreground outline-none focus:border-ring"
-            >
-              <option value="JEV_API_KEY">JEV_API_KEY (JEV 决策模型)</option>
-              <option value="OPENAI_API_KEY">OPENAI_API_KEY (OpenAI)</option>
-              <option value="GEMINI_API_KEY">GEMINI_API_KEY (Gemini)</option>
-              <option value="ANTHROPIC_API_KEY">ANTHROPIC_API_KEY (Claude)</option>
-              <option value="DEEPSEEK_API_KEY">DEEPSEEK_API_KEY (DeepSeek)</option>
-              <option value="GLM_API_KEY">GLM_API_KEY (智谱 GLM)</option>
-              <option value="KIMI_API_KEY">KIMI_API_KEY (月之暗面 Kimi)</option>
-              <option value="TENCENT_API_KEY">TENCENT_API_KEY (腾讯混元)</option>
-              <option value="CUSTOM_LLM_API_KEY">CUSTOM_LLM_API_KEY (其它通用)</option>
-              <option value="NONE">NONE (本地 Ollama / 免密钥)</option>
-              <option value="__custom__">自定义变量名（右侧输入）</option>
-            </select>
-
-            <Input
-              id={`${stage}-env-key`}
-              value={draft.envKeyName}
-              onChange={(e) =>
-                onDraftChange((prev) => ({
-                  ...prev,
-                  envKeyName: e.target.value.toUpperCase(),
-                }))
-              }
-              placeholder="例如：JEV_API_KEY 或自定义变量名"
-              className="h-9 font-mono text-xs uppercase"
-            />
-          </div>
-        </div>
+        <SecretEnvBindingBlock
+          idPrefix={stage}
+          envKeyName={draft.envKeyName}
+          useCustomEnvName={draft.useCustomEnvName}
+          envStatus={envStatus}
+          onChange={(nextEnv, nextCustom) =>
+            onDraftChange((prev) => ({
+              ...prev,
+              envKeyName: nextEnv,
+              useCustomEnvName: nextCustom,
+            }))
+          }
+        />
 
         {/* Stage 2 Gemini Optional Grounding & Thinking Controls */}
         {!isTriage && draft.protocol === "gemini" && (
@@ -531,13 +613,9 @@ function StageEndpointPanel({
             }`}
           >
             <Plus className="size-3.5" aria-hidden="true" />
-            {draft.id
-              ? isTriage
-                ? "保存并保持为决策初筛模型"
-                : "保存并保持为核查提取模型"
-              : isTriage
-                ? "添加并设为第一阶段决策模型"
-                : "添加并设为第二阶段核查模型"}
+            {isTriage
+              ? "添加并设为第一阶段决策模型"
+              : "添加并设为第二阶段核查模型"}
           </Button>
           <Button
             type="button"
@@ -545,7 +623,7 @@ function StageEndpointPanel({
             onClick={() => onSubmit(false)}
             className="h-9 px-3 text-xs"
           >
-            {draft.id ? "仅保存修改" : "仅添加到下方接口库"}
+            仅添加到下方接口库
           </Button>
         </div>
       </CardContent>
@@ -559,20 +637,41 @@ export function CustomEndpointsPage({
   onBack,
   onLog,
 }: CustomEndpointsPageProps) {
-  const triageSectionRef = useRef<HTMLDivElement>(null);
-  const verifySectionRef = useRef<HTMLDivElement>(null);
+  const editorSectionRef = useRef<HTMLDivElement>(null);
 
-  // Stage 1 (Decision Triage) defaults to JEV template for instant setup
+  // Stage 1 (Decision Triage) Add Draft
   const [triageDraft, setTriageDraft] = useState<EndpointDraft>(() =>
     createDraftFromProvider("jev", "triage")
   );
   const [triageError, setTriageError] = useState<string | null>(null);
 
-  // Stage 2 (Deep Verification & Extraction) defaults to OpenAI template
+  // Stage 2 (Deep Verification & Extraction) Add Draft
   const [verifyDraft, setVerifyDraft] = useState<EndpointDraft>(() =>
     createDraftFromProvider("openai", "verify")
   );
   const [verifyError, setVerifyError] = useState<string | null>(null);
+
+  // Dedicated Editor directly below Section 03 (Saved Custom Endpoints Library)
+  const [editingEndpointId, setEditingEndpointId] = useState<string | null>(
+    () => routing.endpoints[0]?.id ?? null
+  );
+  const [editDraft, setEditDraft] = useState<EndpointDraft | null>(() =>
+    routing.endpoints[0] ? draftFromExistingEndpoint(routing.endpoints[0]) : null
+  );
+  const [editBindTriage, setEditBindTriage] = useState<boolean>(() =>
+    Boolean(
+      routing.endpoints[0] &&
+        routing.triageEndpointId === routing.endpoints[0].id
+    )
+  );
+  const [editBindVerify, setEditBindVerify] = useState<boolean>(() =>
+    Boolean(
+      routing.endpoints[0] &&
+        routing.verifyEndpointId === routing.endpoints[0].id
+    )
+  );
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editSavedFlash, setEditSavedFlash] = useState(false);
 
   const [envStatus, setEnvStatus] = useState<Record<string, boolean>>({});
   const [isRefreshingEnv, setIsRefreshingEnv] = useState(false);
@@ -580,13 +679,56 @@ export function CustomEndpointsPage({
     Record<string, EndpointTestState>
   >({});
 
-  // Stage 1 puts JEV + Gemini first; Stage 2 puts mainstream generative models first (all 9 available in both)
   const triageProviders = PROVIDER_TEMPLATES;
   const verifyProviders = useMemo(() => {
     const nonJev = PROVIDER_TEMPLATES.filter((p) => p.id !== "jev");
     const jev = PROVIDER_TEMPLATES.find((p) => p.id === "jev");
     return jev ? [...nonJev, jev] : PROVIDER_TEMPLATES;
   }, []);
+
+  const openEditorForEndpoint = useCallback(
+    (ep: CustomModelEndpoint, scrollToEditor = false) => {
+      setEditingEndpointId(ep.id);
+      setEditDraft(draftFromExistingEndpoint(ep));
+      setEditBindTriage(routing.triageEndpointId === ep.id);
+      setEditBindVerify(routing.verifyEndpointId === ep.id);
+      setEditError(null);
+      setEditSavedFlash(false);
+      if (scrollToEditor) {
+        requestAnimationFrame(() => {
+          editorSectionRef.current?.scrollIntoView({
+            behavior: "smooth",
+            block: "start",
+          });
+        });
+      }
+    },
+    [routing.triageEndpointId, routing.verifyEndpointId]
+  );
+
+  // Keep editor synced if endpoints change (e.g., first endpoint added or edited item deleted)
+  useEffect(() => {
+    if (routing.endpoints.length === 0) {
+      setEditingEndpointId(null);
+      setEditDraft(null);
+      return;
+    }
+    if (
+      editingEndpointId &&
+      !routing.endpoints.some((e) => e.id === editingEndpointId)
+    ) {
+      const first = routing.endpoints[0];
+      setEditingEndpointId(first.id);
+      setEditDraft(draftFromExistingEndpoint(first));
+      setEditBindTriage(routing.triageEndpointId === first.id);
+      setEditBindVerify(routing.verifyEndpointId === first.id);
+    }
+  }, [
+    routing.endpoints,
+    routing.triageEndpointId,
+    routing.verifyEndpointId,
+    editingEndpointId,
+  ]);
 
   const trackedEnvNames = useMemo(() => {
     const set = new Set<string>(PRESET_ENV_KEYS.filter((k) => k !== "NONE"));
@@ -599,14 +741,15 @@ export function CustomEndpointsPage({
         set.add(ep.envKeyName);
       }
     }
-    for (const d of [triageDraft, verifyDraft]) {
+    for (const d of [triageDraft, verifyDraft, editDraft]) {
+      if (!d) continue;
       const upper = d.envKeyName.trim().toUpperCase();
       if (upper && upper !== "NONE" && ENV_VAR_REGEX.test(upper)) {
         set.add(upper);
       }
     }
     return Array.from(set);
-  }, [routing.endpoints, triageDraft, verifyDraft]);
+  }, [routing.endpoints, triageDraft, verifyDraft, editDraft]);
 
   const fetchEnvStatus = useCallback(async () => {
     setIsRefreshingEnv(true);
@@ -629,59 +772,38 @@ export function CustomEndpointsPage({
     fetchEnvStatus();
   }, [fetchEnvStatus]);
 
-  const saveDraft = (stage: "triage" | "verify", bindImmediately: boolean) => {
+  const handleAddEndpoint = (
+    stage: "triage" | "verify",
+    bindImmediately: boolean
+  ) => {
     const draft = stage === "triage" ? triageDraft : verifyDraft;
     const setError = stage === "triage" ? setTriageError : setVerifyError;
     const setDraft = stage === "triage" ? setTriageDraft : setVerifyDraft;
 
     setError(null);
-    const name = draft.name.trim();
-    const baseUrl = draft.baseUrl.trim().replace(/\/+$/, "");
-    const modelId = draft.modelId.trim();
-    const envKeyName = draft.envKeyName.trim().toUpperCase();
-
-    if (!name) {
-      setError("请填写接口显示名称。");
-      return;
-    }
-    if (!baseUrl || !/^https?:\/\/.+/i.test(baseUrl)) {
-      setError("请填写有效的 Base URL（必须以 https:// 或 http:// 开头）。");
-      return;
-    }
-    if (!modelId) {
-      setError("请填写需要调用的模型 ID（Model ID）。");
-      return;
-    }
-    if (envKeyName !== "NONE" && !ENV_VAR_REGEX.test(envKeyName)) {
-      setError(
-        "环境变量名仅支持大写字母、数字和下划线（如 JEV_API_KEY），或填写 NONE 表示本地免密钥接口。"
-      );
+    const { error, cleaned } = validateEndpointDraft(draft);
+    if (error || !cleaned) {
+      setError(error || "配置无效");
       return;
     }
 
-    const endpointId =
-      draft.id ??
-      `ep-${stage}-${draft.provider}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
+    const endpointId = `ep-${stage}-${draft.provider}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`;
 
     const nextEndpoint: CustomModelEndpoint = {
       id: endpointId,
-      name,
+      name: cleaned.name,
       provider: draft.provider,
       protocol: draft.protocol,
-      baseUrl,
-      modelId,
-      envKeyName,
+      baseUrl: cleaned.baseUrl,
+      modelId: cleaned.modelId,
+      envKeyName: cleaned.envKeyName,
       stageRole: stage,
       enableSearch: draft.protocol === "gemini" ? draft.enableSearch : false,
       thinkingLevel: draft.thinkingLevel,
       notes: draft.notes.trim() || undefined,
     };
 
-    const exists = routing.endpoints.some((e) => e.id === endpointId);
-    const nextEndpoints = exists
-      ? routing.endpoints.map((e) => (e.id === endpointId ? nextEndpoint : e))
-      : [...routing.endpoints, nextEndpoint];
-
+    const nextEndpoints = [...routing.endpoints, nextEndpoint];
     let nextTriageId = routing.triageEndpointId;
     let nextVerifyId = routing.verifyEndpointId;
 
@@ -698,41 +820,78 @@ export function CustomEndpointsPage({
 
     onLog(
       "success",
-      `${exists ? "已更新" : "已添加"}${stage === "triage" ? "决策初筛" : "核查提取"}接口「${name}」([${PROVIDER_MAP[draft.provider].shortTag}] ${modelId})。`
+      `已添加${stage === "triage" ? "决策初筛" : "核查提取"}接口「${cleaned.name}」([${(PROVIDER_MAP[draft.provider] ?? PROVIDER_MAP.other).shortTag}] ${cleaned.modelId})。`
     );
+
+    // Select newly added endpoint in the below-library editor if nothing is open yet
+    if (!editingEndpointId) {
+      setEditingEndpointId(endpointId);
+      setEditDraft(draftFromExistingEndpoint(nextEndpoint));
+      setEditBindTriage(nextTriageId === endpointId);
+      setEditBindVerify(nextVerifyId === endpointId);
+    }
 
     setDraft(createDraftFromProvider(draft.provider, stage));
   };
 
-  const handleEditEndpoint = (ep: CustomModelEndpoint) => {
-    const targetStage: "triage" | "verify" =
-      ep.stageRole === "verify" ||
-      (routing.verifyEndpointId === ep.id && routing.triageEndpointId !== ep.id)
-        ? "verify"
-        : "triage";
+  const handleSaveEditorChanges = () => {
+    if (!editingEndpointId || !editDraft) return;
+    setEditError(null);
 
-    const nextDraft: EndpointDraft = {
-      id: ep.id,
-      name: ep.name,
-      provider: ep.provider,
-      protocol: ep.protocol,
-      baseUrl: ep.baseUrl,
-      modelId: ep.modelId,
-      envKeyName: ep.envKeyName,
-      enableSearch: Boolean(ep.enableSearch),
-      thinkingLevel: ep.thinkingLevel ?? "low",
-      notes: ep.notes ?? "",
+    const { error, cleaned } = validateEndpointDraft(editDraft);
+    if (error || !cleaned) {
+      setEditError(error || "配置无效");
+      return;
+    }
+
+    const existing = routing.endpoints.find((e) => e.id === editingEndpointId);
+    if (!existing) return;
+
+    const updatedEndpoint: CustomModelEndpoint = {
+      ...existing,
+      name: cleaned.name,
+      provider: editDraft.provider,
+      protocol: editDraft.protocol,
+      baseUrl: cleaned.baseUrl,
+      modelId: cleaned.modelId,
+      envKeyName: cleaned.envKeyName,
+      enableSearch:
+        editDraft.protocol === "gemini" ? editDraft.enableSearch : false,
+      thinkingLevel: editDraft.thinkingLevel,
+      notes: editDraft.notes.trim() || undefined,
     };
 
-    if (targetStage === "triage") {
-      setTriageError(null);
-      setTriageDraft(nextDraft);
-      triageSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    } else {
-      setVerifyError(null);
-      setVerifyDraft(nextDraft);
-      verifySectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const nextEndpoints = routing.endpoints.map((ep) =>
+      ep.id === editingEndpointId ? updatedEndpoint : ep
+    );
+
+    let nextTriageId = routing.triageEndpointId;
+    let nextVerifyId = routing.verifyEndpointId;
+
+    if (editBindTriage) {
+      nextTriageId = editingEndpointId;
+    } else if (nextTriageId === editingEndpointId) {
+      nextTriageId = "";
     }
+
+    if (editBindVerify) {
+      nextVerifyId = editingEndpointId;
+    } else if (nextVerifyId === editingEndpointId) {
+      nextVerifyId = "";
+    }
+
+    onChangeRouting({
+      endpoints: nextEndpoints,
+      triageEndpointId: nextTriageId,
+      verifyEndpointId: nextVerifyId,
+    });
+
+    setEditSavedFlash(true);
+    window.setTimeout(() => setEditSavedFlash(false), 2000);
+    onLog(
+      "success",
+      `已保存接口修改「${cleaned.name}」([${(PROVIDER_MAP[editDraft.provider] ?? PROVIDER_MAP.other).shortTag}] ${cleaned.modelId})。`
+    );
   };
 
   const handleDeleteEndpoint = (ep: CustomModelEndpoint) => {
@@ -751,12 +910,6 @@ export function CustomEndpointsPage({
       triageEndpointId: nextTriage,
       verifyEndpointId: nextVerify,
     });
-    if (triageDraft.id === ep.id) {
-      setTriageDraft(createDraftFromProvider("jev", "triage"));
-    }
-    if (verifyDraft.id === ep.id) {
-      setVerifyDraft(createDraftFromProvider("openai", "verify"));
-    }
     onLog("warn", `已删除自定义接口「${ep.name}」。`);
   };
 
@@ -811,6 +964,18 @@ export function CustomEndpointsPage({
     }
   };
 
+  const activeEditorTpl = editDraft
+    ? PROVIDER_MAP[editDraft.provider] ?? PROVIDER_MAP.other
+    : null;
+  const activeEditorSuggestedModels = useMemo(() => {
+    if (!activeEditorTpl) return [];
+    const merged = new Set<string>([
+      ...activeEditorTpl.suggestedModels,
+      ...(activeEditorTpl.triageSuggestedModels ?? []),
+    ]);
+    return Array.from(merged);
+  }, [activeEditorTpl]);
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -832,7 +997,7 @@ export function CustomEndpointsPage({
             </h1>
           </div>
           <p className="text-xs text-muted-foreground">
-            上下分区分别添加与绑定第一阶段（决策初筛，支持 JEV / Gemini / OpenAI 等）与第二阶段（深度核查与 11 列提取）接口；密钥通过平台 Settings &gt; Secrets 安全代理读取。
+            上下分区添加第一阶段（决策初筛）与第二阶段（深度核查提取）接口，并在底部接口库直接编辑任意已添加模型。密钥统一通过服务端 Secrets 或桌面端 .env 安全注入。
           </p>
         </div>
 
@@ -848,73 +1013,55 @@ export function CustomEndpointsPage({
             className={`size-3.5 ${isRefreshingEnv ? "animate-spin" : ""}`}
             aria-hidden="true"
           />
-          刷新 Secrets 状态
+          刷新密钥就绪状态
         </Button>
       </div>
 
-      {/* Top Panel: Stage 1 Decision Triage Endpoint Builder (Includes JEV) */}
-      <div ref={triageSectionRef} className="scroll-mt-20">
-        <StageEndpointPanel
-          stage="triage"
-          title="01. 第一阶段 · 决策初筛模型接口添加（支持 JEV / Gemini / OpenAI 等）"
-          subtitle="用于高速四分类并自动拦截低质水贴噪音。优先支持 JEV 决策模型接口、Gemini Decisions API 以及各类兼容网关。"
-          providers={triageProviders}
-          draft={triageDraft}
-          onDraftChange={setTriageDraft}
-          onSelectProvider={(providerId) => {
-            setTriageError(null);
-            setTriageDraft((prev) => {
-              const fresh = createDraftFromProvider(providerId, "triage");
-              return prev.id ? { ...fresh, id: prev.id, notes: prev.notes } : fresh;
-            });
-          }}
-          onCancelEdit={() => {
-            setTriageError(null);
-            setTriageDraft(createDraftFromProvider("jev", "triage"));
-          }}
-          onSubmit={(bind) => saveDraft("triage", bind)}
-          formError={triageError}
-          envStatus={envStatus}
-          endpoints={routing.endpoints}
-          boundEndpointId={routing.triageEndpointId}
-          onChangeBoundEndpointId={(id) =>
-            onChangeRouting({ ...routing, triageEndpointId: id })
-          }
-        />
-      </div>
+      {/* 01. Stage 1 Decision Triage Endpoint Builder */}
+      <StageEndpointPanel
+        stage="triage"
+        title="01. 第一阶段 · 决策初筛模型接口添加（支持 JEV / Gemini / OpenAI 等最新模型）"
+        subtitle="用于高速四分类并自动拦截低质水贴噪音。优先支持 JEV 决策模型、Gemini Decisions API 以及各类最新轻量高速模型。"
+        providers={triageProviders}
+        draft={triageDraft}
+        onDraftChange={setTriageDraft}
+        onSelectProvider={(providerId) => {
+          setTriageError(null);
+          setTriageDraft(createDraftFromProvider(providerId, "triage"));
+        }}
+        onSubmit={(bind) => handleAddEndpoint("triage", bind)}
+        formError={triageError}
+        envStatus={envStatus}
+        endpoints={routing.endpoints}
+        boundEndpointId={routing.triageEndpointId}
+        onChangeBoundEndpointId={(id) =>
+          onChangeRouting({ ...routing, triageEndpointId: id })
+        }
+      />
 
-      {/* Bottom Panel: Stage 2 Deep Fact-Checking & Extraction Endpoint Builder */}
-      <div ref={verifySectionRef} className="scroll-mt-20">
-        <StageEndpointPanel
-          stage="verify"
-          title="02. 第二阶段 · 深度核查与 11 列提取模型接口添加"
-          subtitle="用于对高价值条目执行多项目拆行、事实核查与 11 列结构化 JSON 提取，支持 OpenAI / Gemini / Claude / DeepSeek / GLM / Kimi / 腾讯 / 其它 / JEV。"
-          providers={verifyProviders}
-          draft={verifyDraft}
-          onDraftChange={setVerifyDraft}
-          onSelectProvider={(providerId) => {
-            setVerifyError(null);
-            setVerifyDraft((prev) => {
-              const fresh = createDraftFromProvider(providerId, "verify");
-              return prev.id ? { ...fresh, id: prev.id, notes: prev.notes } : fresh;
-            });
-          }}
-          onCancelEdit={() => {
-            setVerifyError(null);
-            setVerifyDraft(createDraftFromProvider("openai", "verify"));
-          }}
-          onSubmit={(bind) => saveDraft("verify", bind)}
-          formError={verifyError}
-          envStatus={envStatus}
-          endpoints={routing.endpoints}
-          boundEndpointId={routing.verifyEndpointId}
-          onChangeBoundEndpointId={(id) =>
-            onChangeRouting({ ...routing, verifyEndpointId: id })
-          }
-        />
-      </div>
+      {/* 02. Stage 2 Deep Fact-Checking & Extraction Endpoint Builder */}
+      <StageEndpointPanel
+        stage="verify"
+        title="02. 第二阶段 · 深度核查与 11 列提取模型接口添加"
+        subtitle="用于对高价值条目执行多项目拆行、事实核查与 11 列结构化 JSON 提取，已更新至 GPT-6.2 / Gemini 4 / Claude 5.5 / DeepSeek V4 / GLM-4.7 / Kimi K3.1 / 混元 HY4 等最新模板。"
+        providers={verifyProviders}
+        draft={verifyDraft}
+        onDraftChange={setVerifyDraft}
+        onSelectProvider={(providerId) => {
+          setVerifyError(null);
+          setVerifyDraft(createDraftFromProvider(providerId, "verify"));
+        }}
+        onSubmit={(bind) => handleAddEndpoint("verify", bind)}
+        formError={verifyError}
+        envStatus={envStatus}
+        endpoints={routing.endpoints}
+        boundEndpointId={routing.verifyEndpointId}
+        onChangeBoundEndpointId={(id) =>
+          onChangeRouting({ ...routing, verifyEndpointId: id })
+        }
+      />
 
-      {/* Saved Custom Endpoints Library */}
+      {/* 03. Saved Custom Endpoints Library */}
       <Card className="gap-0 overflow-hidden rounded-xl border border-border bg-card py-0 shadow-none ring-0">
         <CardHeader className="flex flex-row items-center justify-between gap-4 border-b border-border px-5 py-4">
           <div className="space-y-0.5">
@@ -923,7 +1070,7 @@ export function CustomEndpointsPage({
               03. 已添加的自定义接口库 ({routing.endpoints.length})
             </h2>
             <p className="text-xs text-muted-foreground">
-              可随时测试连通性、编辑参数或切换第一/第二阶段绑定。所有接口配置保存在本地浏览器。
+              可随时测试连通性、切换第一/第二阶段绑定，或点击「编辑接口」在下方编辑区修改全部参数。
             </p>
           </div>
         </CardHeader>
@@ -939,7 +1086,7 @@ export function CustomEndpointsPage({
                 尚未添加任何自定义模型接口
               </p>
               <p className="max-w-md text-xs text-muted-foreground">
-                请在上方「第一阶段」与「第二阶段」添加窗口中分别配置您的 JEV、OpenAI、Gemini、Claude、DeepSeek、GLM、Kimi、腾讯混元或其它兼容接口。
+                请在上方「01. 第一阶段」与「02. 第二阶段」添加窗口中配置您的 JEV、OpenAI、Gemini、Claude、DeepSeek、GLM、Kimi、腾讯混元或其它兼容接口。
               </p>
             </div>
           ) : (
@@ -948,6 +1095,7 @@ export function CustomEndpointsPage({
                 const tpl = PROVIDER_MAP[ep.provider] ?? PROVIDER_MAP.other;
                 const isTriage = routing.triageEndpointId === ep.id;
                 const isVerify = routing.verifyEndpointId === ep.id;
+                const isEditingThis = editingEndpointId === ep.id;
                 const isKeyless = ep.envKeyName === "NONE";
                 const keyReady = isKeyless || Boolean(envStatus[ep.envKeyName]);
                 const testState = testResults[ep.id];
@@ -955,7 +1103,9 @@ export function CustomEndpointsPage({
                 return (
                   <div
                     key={ep.id}
-                    className="flex flex-col gap-3 px-5 py-4 transition-colors hover:bg-muted/20 lg:flex-row lg:items-center lg:justify-between"
+                    className={`flex flex-col gap-3 px-5 py-4 transition-colors lg:flex-row lg:items-center lg:justify-between ${
+                      isEditingThis ? "bg-muted/35" : "hover:bg-muted/20"
+                    }`}
                   >
                     <div className="min-w-0 flex-1 space-y-1.5">
                       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
@@ -978,6 +1128,11 @@ export function CustomEndpointsPage({
                         {isVerify && (
                           <span className="rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[11px] font-medium text-sky-600 dark:text-sky-400">
                             第二阶段 · 核查提取
+                          </span>
+                        )}
+                        {isEditingThis && (
+                          <span className="rounded border border-foreground/30 bg-muted px-1.5 py-0.5 text-[11px] font-medium text-foreground">
+                            下方编辑中
                           </span>
                         )}
                       </div>
@@ -1004,7 +1159,7 @@ export function CustomEndpointsPage({
                             ? "免密钥 (NONE)"
                             : keyReady
                               ? `${ep.envKeyName} 已就绪`
-                              : `${ep.envKeyName} 未在 Secrets 配置`}
+                              : `${ep.envKeyName} 未配置有效密钥`}
                         </span>
                         {ep.protocol === "gemini" && ep.enableSearch && (
                           <>
@@ -1072,12 +1227,15 @@ export function CustomEndpointsPage({
                         type="button"
                         variant={isTriage ? "secondary" : "outline"}
                         size="sm"
-                        onClick={() =>
+                        onClick={() => {
                           onChangeRouting({
                             ...routing,
                             triageEndpointId: ep.id,
-                          })
-                        }
+                          });
+                          if (editingEndpointId === ep.id) {
+                            setEditBindTriage(true);
+                          }
+                        }}
                         className="h-8 px-2.5 text-xs"
                       >
                         {isTriage ? "当前初筛" : "设为初筛"}
@@ -1087,12 +1245,15 @@ export function CustomEndpointsPage({
                         type="button"
                         variant={isVerify ? "secondary" : "outline"}
                         size="sm"
-                        onClick={() =>
+                        onClick={() => {
                           onChangeRouting({
                             ...routing,
                             verifyEndpointId: ep.id,
-                          })
-                        }
+                          });
+                          if (editingEndpointId === ep.id) {
+                            setEditBindVerify(true);
+                          }
+                        }}
                         className="h-8 px-2.5 text-xs"
                       >
                         {isVerify ? "当前核查" : "设为核查"}
@@ -1100,14 +1261,13 @@ export function CustomEndpointsPage({
 
                       <Button
                         type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => handleEditEndpoint(ep)}
-                        aria-label={`编辑 ${ep.name}`}
-                        title="编辑接口"
-                        className="size-8 text-muted-foreground hover:text-foreground"
+                        variant={isEditingThis ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => openEditorForEndpoint(ep, true)}
+                        className="h-8 gap-1 px-2.5 text-xs"
                       >
-                        <Edit3 className="size-3.5" />
+                        <Edit3 className="size-3.5" aria-hidden="true" />
+                        编辑接口
                       </Button>
 
                       <Button
@@ -1129,6 +1289,398 @@ export function CustomEndpointsPage({
           )}
         </CardContent>
       </Card>
+
+      {/* 04. Dedicated Model Endpoint Editor Directly Below Section 03 */}
+      {routing.endpoints.length > 0 && (
+        <div ref={editorSectionRef} className="scroll-mt-20">
+          <Card className="gap-0 overflow-hidden rounded-xl border border-border bg-card py-0 shadow-none ring-0">
+            <CardHeader className="flex flex-col gap-3 border-b border-border px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="space-y-0.5">
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <Edit3 className="size-4 text-muted-foreground" aria-hidden="true" />
+                  04. 模型接口编辑区
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  在此直接修改已添加接口的厂商模板、模型 ID、Base URL、协议类型、环境变量绑定与阶段分配。
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 lg:min-w-[320px] lg:justify-end">
+                <span className="text-xs text-muted-foreground whitespace-nowrap">
+                  选择编辑对象：
+                </span>
+                <select
+                  value={editingEndpointId ?? ""}
+                  onChange={(e) => {
+                    const hit = routing.endpoints.find(
+                      (item) => item.id === e.target.value
+                    );
+                    if (hit) {
+                      openEditorForEndpoint(hit, false);
+                    } else {
+                      setEditingEndpointId(null);
+                      setEditDraft(null);
+                    }
+                  }}
+                  aria-label="选择要编辑的已添加接口"
+                  className="h-8 max-w-[260px] flex-1 rounded-md border border-input bg-background px-2.5 text-xs text-foreground outline-none focus:border-ring"
+                >
+                  <option value="">请选择一个已添加接口…</option>
+                  {routing.endpoints.map((ep) => (
+                    <option key={ep.id} value={ep.id}>
+                      [{(PROVIDER_MAP[ep.provider] ?? PROVIDER_MAP.other).shortTag}]{" "}
+                      {ep.name} · {ep.modelId}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </CardHeader>
+
+            <CardContent className="p-5">
+              {!editingEndpointId || !editDraft ? (
+                <div className="py-6 text-center text-xs text-muted-foreground">
+                  请点击上方「03. 已添加的自定义接口库」中任意条目的「编辑接口」按钮，或在右上角下拉框中选择接口开始编辑。
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Provider quick switch */}
+                  <div className="space-y-2">
+                    <span className="text-xs font-medium text-muted-foreground">
+                      切换所属厂商模板（点击会同步刷新该厂商默认 Base URL、协议与推荐模型）
+                    </span>
+                    <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-9">
+                      {PROVIDER_TEMPLATES.map((tpl) => {
+                        const selected = editDraft.provider === tpl.id;
+                        return (
+                          <button
+                            key={`edit-${tpl.id}`}
+                            type="button"
+                            onClick={() => {
+                              setEditError(null);
+                              setEditDraft((prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      provider: tpl.id,
+                                      protocol: tpl.defaultProtocol,
+                                      baseUrl: tpl.defaultBaseUrl,
+                                      modelId: tpl.suggestedModels[0] ?? prev.modelId,
+                                      envKeyName: tpl.defaultEnvKey,
+                                      useCustomEnvName: false,
+                                      enableSearch: tpl.id === "gemini",
+                                    }
+                                  : prev
+                              );
+                            }}
+                            className={`flex cursor-pointer flex-col items-start rounded-lg border px-2.5 py-2 text-left transition-colors ${
+                              selected
+                                ? "border-foreground bg-muted/60"
+                                : "border-border bg-background hover:border-foreground/40 hover:bg-muted/25"
+                            }`}
+                          >
+                            <span
+                              className={`font-mono text-[11px] font-bold ${tpl.accentClass}`}
+                            >
+                              {tpl.shortTag}
+                            </span>
+                            <span className="mt-0.5 w-full truncate text-[11px] font-medium text-foreground">
+                              {tpl.label}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Core fields */}
+                  <div className="grid grid-cols-1 gap-3.5 md:grid-cols-12">
+                    <div className="space-y-1.5 md:col-span-4">
+                      <label
+                        htmlFor="edit-ep-name"
+                        className="text-xs font-medium text-foreground"
+                      >
+                        接口显示名称
+                      </label>
+                      <Input
+                        id="edit-ep-name"
+                        value={editDraft.name}
+                        onChange={(e) =>
+                          setEditDraft((prev) =>
+                            prev ? { ...prev, name: e.target.value } : prev
+                          )
+                        }
+                        className="h-9 text-xs"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5 md:col-span-4">
+                      <label
+                        htmlFor="edit-ep-protocol"
+                        className="text-xs font-medium text-foreground"
+                      >
+                        请求协议格式
+                      </label>
+                      <select
+                        id="edit-ep-protocol"
+                        value={editDraft.protocol}
+                        onChange={(e) =>
+                          setEditDraft((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  protocol: e.target.value as ApiProtocol,
+                                }
+                              : prev
+                          )
+                        }
+                        className="h-9 w-full rounded-md border border-input bg-background px-3 text-xs text-foreground outline-none focus:border-ring"
+                      >
+                        {(Object.keys(PROTOCOL_LABELS) as ApiProtocol[]).map(
+                          (proto) => (
+                            <option key={proto} value={proto}>
+                              {PROTOCOL_LABELS[proto]}
+                            </option>
+                          )
+                        )}
+                      </select>
+                    </div>
+
+                    <div className="space-y-1.5 md:col-span-4">
+                      <label
+                        htmlFor="edit-ep-model"
+                        className="text-xs font-medium text-foreground"
+                      >
+                        模型 ID (Model ID)
+                      </label>
+                      <Input
+                        id="edit-ep-model"
+                        value={editDraft.modelId}
+                        onChange={(e) =>
+                          setEditDraft((prev) =>
+                            prev ? { ...prev, modelId: e.target.value } : prev
+                          )
+                        }
+                        className="h-9 font-mono text-xs"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5 md:col-span-7">
+                      <label
+                        htmlFor="edit-ep-url"
+                        className="text-xs font-medium text-foreground"
+                      >
+                        接口地址 (Base URL)
+                      </label>
+                      <Input
+                        id="edit-ep-url"
+                        value={editDraft.baseUrl}
+                        onChange={(e) =>
+                          setEditDraft((prev) =>
+                            prev ? { ...prev, baseUrl: e.target.value } : prev
+                          )
+                        }
+                        className="h-9 font-mono text-xs"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5 md:col-span-5">
+                      <label
+                        htmlFor="edit-ep-notes"
+                        className="text-xs font-medium text-foreground"
+                      >
+                        备注说明（可选）
+                      </label>
+                      <Input
+                        id="edit-ep-notes"
+                        value={editDraft.notes}
+                        onChange={(e) =>
+                          setEditDraft((prev) =>
+                            prev ? { ...prev, notes: e.target.value } : prev
+                          )
+                        }
+                        className="h-9 text-xs"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Quick-select latest model chips */}
+                  {activeEditorTpl && (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] text-muted-foreground">
+                        {activeEditorTpl.label} 最新模型快捷替换：
+                      </span>
+                      {activeEditorSuggestedModels.map((m) => (
+                        <button
+                          key={`edit-m-${m}`}
+                          type="button"
+                          onClick={() =>
+                            setEditDraft((prev) =>
+                              prev ? { ...prev, modelId: m } : prev
+                            )
+                          }
+                          className={`cursor-pointer rounded border px-2 py-0.5 font-mono text-[11px] transition-colors ${
+                            editDraft.modelId === m
+                              ? "border-foreground bg-muted text-foreground"
+                              : "border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground"
+                          }`}
+                        >
+                          {m}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <SecretEnvBindingBlock
+                    idPrefix="editor"
+                    envKeyName={editDraft.envKeyName}
+                    useCustomEnvName={editDraft.useCustomEnvName}
+                    envStatus={envStatus}
+                    onChange={(nextEnv, nextCustom) =>
+                      setEditDraft((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              envKeyName: nextEnv,
+                              useCustomEnvName: nextCustom,
+                            }
+                          : prev
+                      )
+                    }
+                  />
+
+                  {/* Gemini specific options */}
+                  {editDraft.protocol === "gemini" && (
+                    <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/15 p-3.5 sm:flex-row sm:items-center sm:justify-between">
+                      <label
+                        htmlFor="edit-google-search"
+                        className="flex cursor-pointer items-center gap-2.5 text-xs font-medium text-foreground"
+                      >
+                        <Checkbox
+                          id="edit-google-search"
+                          checked={editDraft.enableSearch}
+                          onCheckedChange={(checked) =>
+                            setEditDraft((prev) =>
+                              prev
+                                ? { ...prev, enableSearch: Boolean(checked) }
+                                : prev
+                            )
+                          }
+                        />
+                        <Globe
+                          className="size-3.5 text-sky-500"
+                          aria-hidden="true"
+                        />
+                        第二阶段启用 Google Search 实时联网核查
+                      </label>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-[11px] text-muted-foreground">
+                          推理深度：
+                        </span>
+                        {(["low", "medium", "high"] as ThinkingDepth[]).map(
+                          (lvl) => (
+                            <button
+                              key={`edit-lvl-${lvl}`}
+                              type="button"
+                              onClick={() =>
+                                setEditDraft((prev) =>
+                                  prev ? { ...prev, thinkingLevel: lvl } : prev
+                                )
+                              }
+                              className={`cursor-pointer rounded border px-2 py-1 font-mono text-[11px] transition-colors ${
+                                editDraft.thinkingLevel === lvl
+                                  ? "border-foreground bg-muted text-foreground"
+                                  : "border-border text-muted-foreground hover:text-foreground"
+                              }`}
+                            >
+                              {lvl}
+                            </button>
+                          )
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Stage bindings inside editor */}
+                  <div className="flex flex-wrap items-center gap-5 rounded-lg border border-border bg-muted/15 px-3.5 py-2.5 text-xs">
+                    <span className="font-medium text-muted-foreground">
+                      阶段路由绑定：
+                    </span>
+                    <label className="inline-flex cursor-pointer items-center gap-2 text-foreground">
+                      <Checkbox
+                        checked={editBindTriage}
+                        onCheckedChange={(c) => setEditBindTriage(Boolean(c))}
+                      />
+                      <span>绑定为第一阶段（决策初筛）</span>
+                    </label>
+                    <label className="inline-flex cursor-pointer items-center gap-2 text-foreground">
+                      <Checkbox
+                        checked={editBindVerify}
+                        onCheckedChange={(c) => setEditBindVerify(Boolean(c))}
+                      />
+                      <span>绑定为第二阶段（深度核查与 11 列提取）</span>
+                    </label>
+                  </div>
+
+                  {editError && (
+                    <p className="rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400">
+                      {editError}
+                    </p>
+                  )}
+
+                  <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                    <Button
+                      type="button"
+                      onClick={handleSaveEditorChanges}
+                      className="h-9 gap-1.5 px-4 text-xs font-semibold"
+                    >
+                      {editSavedFlash ? (
+                        <>
+                          <CheckCircle2 className="size-3.5" aria-hidden="true" />
+                          已保存修改
+                        </>
+                      ) : (
+                        <>
+                          <Save className="size-3.5" aria-hidden="true" />
+                          保存接口修改
+                        </>
+                      )}
+                    </Button>
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        const orig = routing.endpoints.find(
+                          (e) => e.id === editingEndpointId
+                        );
+                        if (orig) openEditorForEndpoint(orig, false);
+                      }}
+                      className="h-9 px-3 text-xs"
+                    >
+                      还原未保存修改
+                    </Button>
+
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => {
+                        setEditingEndpointId(null);
+                        setEditDraft(null);
+                        setEditError(null);
+                      }}
+                      className="h-9 gap-1 px-3 text-xs text-muted-foreground"
+                    >
+                      <X className="size-3.5" aria-hidden="true" />
+                      收起编辑区
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

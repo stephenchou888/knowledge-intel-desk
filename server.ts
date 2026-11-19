@@ -82,6 +82,16 @@ function validateBaseUrl(rawUrl: string): string {
   return cleaned;
 }
 
+const PLACEHOLDER_SECRET_REGEX =
+  /^(MY_[A-Z0-9_]+|YOUR_[A-Z0-9_]+|REPLACE_ME|CHANGE_ME|TODO|PLACEHOLDER|xxx+)$/i;
+
+function isRealSecretValue(val: string | undefined): boolean {
+  const trimmed = (val || "").trim();
+  if (!trimmed) return false;
+  if (PLACEHOLDER_SECRET_REGEX.test(trimmed)) return false;
+  return true;
+}
+
 function resolveEndpointSecret(envKeyNameRaw: string): {
   apiKey: string;
   envKeyName: string;
@@ -97,14 +107,14 @@ function resolveEndpointSecret(envKeyNameRaw: string): {
       `无效的环境变量名「${envKeyNameRaw}」，仅允许大写字母、数字和下划线（或使用 NONE）。`
     );
   }
-  const apiKey = (process.env[envKeyName] || "").trim();
-  if (!apiKey) {
+  const rawVal = (process.env[envKeyName] || "").trim();
+  if (!isRealSecretValue(rawVal)) {
     throw new ProxyHttpError(
       400,
-      `服务端未检测到环境变量 ${envKeyName}。请在平台 Settings > Secrets 中添加同名变量并填入该厂商 API Key 后重试。`
+      `服务端未检测到有效的环境变量 ${envKeyName}（当前为空或仍为模板占位值）。网页端请在 Settings > Secrets 中配置，桌面端请点击顶部菜单「配置与密钥 → 打开 .env」填入真实密钥并重载应用。`
     );
   }
-  return { apiKey, envKeyName, isKeyless: false };
+  return { apiKey: rawVal, envKeyName, isKeyless: false };
 }
 
 function validateEndpointPayload(raw: unknown): EndpointConfigPayload {
@@ -767,7 +777,7 @@ export async function startServer(
 
     const status: Record<string, boolean> = {};
     for (const name of requested) {
-      status[name] = Boolean(process.env[name]?.trim());
+      status[name] = isRealSecretValue(process.env[name]);
     }
     return res.json({ status });
   });

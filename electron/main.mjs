@@ -17,31 +17,29 @@ function ensureUserEnvFile() {
   const userDataDir = app.getPath("userData");
   const envPath = path.join(userDataDir, ".env");
   if (!fs.existsSync(envPath)) {
-    const templatePath = path.join(appRoot, ".env.example");
     try {
       fs.mkdirSync(userDataDir, { recursive: true });
-      if (fs.existsSync(templatePath)) {
-        const templateContent = fs.readFileSync(templatePath, "utf-8");
-        fs.writeFileSync(envPath, templateContent, "utf-8");
-      } else {
-        fs.writeFileSync(
-          envPath,
-          [
-            "# 在此配置您自定义模型接口对应的环境变量密钥，保存后重启应用生效",
-            "JEV_API_KEY=",
-            "OPENAI_API_KEY=",
-            "GEMINI_API_KEY=",
-            "ANTHROPIC_API_KEY=",
-            "DEEPSEEK_API_KEY=",
-            "GLM_API_KEY=",
-            "KIMI_API_KEY=",
-            "TENCENT_API_KEY=",
-            "CUSTOM_LLM_API_KEY=",
-            "",
-          ].join("\n"),
-          "utf-8"
-        );
-      }
+      fs.writeFileSync(
+        envPath,
+        [
+          "# ============================================================================",
+          "# 知识库信息核查 · 本地安全密钥配置文件",
+          "# 请在等号右侧填入您需要使用的厂商真实 API Key，保存后点击顶部菜单「重新加载应用」生效",
+          "# ============================================================================",
+          "",
+          "JEV_API_KEY=",
+          "OPENAI_API_KEY=",
+          "GEMINI_API_KEY=",
+          "ANTHROPIC_API_KEY=",
+          "DEEPSEEK_API_KEY=",
+          "GLM_API_KEY=",
+          "KIMI_API_KEY=",
+          "TENCENT_API_KEY=",
+          "CUSTOM_LLM_API_KEY=",
+          "",
+        ].join("\n"),
+        "utf-8"
+      );
     } catch (err) {
       console.error("Failed to initialize user .env template:", err);
     }
