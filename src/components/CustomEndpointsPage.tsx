@@ -139,7 +139,7 @@ function validateEndpointDraft(draft: EndpointDraft): {
   if (envKeyName !== "NONE" && !ENV_VAR_REGEX.test(envKeyName)) {
     return {
       error:
-        "环境变量名仅支持大写字母、数字和下划线（如 JEV_API_KEY），不能在此处填入明文 API Key；本地免密钥服务请选择 NONE。",
+        "环境变量名仅支持大写字母、数字和下划线（如 JEV_API_KEY），本地免鉴权服务请选择 NONE。",
     };
   }
   return { cleaned: { name, baseUrl, modelId, envKeyName } };
@@ -175,7 +175,7 @@ function SecretEnvBindingBlock({
             className="size-3.5 text-emerald-500"
             aria-hidden="true"
           />
-          服务端密钥环境变量绑定（安全代理 · 不存储明文密钥）
+          服务端环境变量绑定（本地代理读取）
         </label>
         {isKeyless ? (
           <span className="font-mono text-[11px] text-sky-600 dark:text-sky-400">
@@ -251,11 +251,12 @@ function SecretEnvBindingBlock({
                 </span>
               ) : (
                 <span>
-                  为防止浏览器泄露 API Key，前端不提供明文密钥框。请前往{" "}
-                  <strong className="text-foreground">Settings &gt; Secrets</strong>
-                  （桌面端点击顶部菜单{" "}
-                  <strong className="text-foreground">配置与密钥 → 打开 .env</strong>）配置{" "}
-                  <strong className="font-mono text-foreground">{upper}</strong> 后重载生效。
+                  请在本地{" "}
+                  <strong className="font-mono text-foreground">.env</strong> 或运行环境变量中配置{" "}
+                  <strong className="font-mono text-foreground">{upper}</strong>
+                  （桌面端可在顶部菜单{" "}
+                  <strong className="text-foreground">配置与密钥 → 打开密钥配置文件 (.env)</strong>{" "}
+                  编辑并重载生效）。
                 </span>
               )}
             </div>
@@ -997,7 +998,7 @@ export function CustomEndpointsPage({
             </h1>
           </div>
           <p className="text-xs text-muted-foreground">
-            上下分区添加第一阶段（决策初筛）与第二阶段（深度核查提取）接口，并在底部接口库直接编辑任意已添加模型。密钥统一通过服务端 Secrets 或桌面端 .env 安全注入。
+            上下分区添加第一阶段（决策初筛）与第二阶段（深度核查提取）接口，并在底部接口库直接编辑任意已添加模型。接口密钥统一通过服务端环境变量（.env）安全代理注入。
           </p>
         </div>
 

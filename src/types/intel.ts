@@ -156,7 +156,7 @@ export interface CustomModelEndpoint {
   protocol: ApiProtocol;
   baseUrl: string;
   modelId: string;
-  /** Server-side Secrets env variable name (e.g. OPENAI_API_KEY) or "NONE" for local keyless gateway */
+  /** Server-side environment variable name (e.g. OPENAI_API_KEY) or "NONE" for local keyless gateway */
   envKeyName: string;
   /** Preferred stage when created ("triage" | "verify") */
   stageRole?: "triage" | "verify";

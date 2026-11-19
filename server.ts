@@ -111,7 +111,7 @@ function resolveEndpointSecret(envKeyNameRaw: string): {
   if (!isRealSecretValue(rawVal)) {
     throw new ProxyHttpError(
       400,
-      `服务端未检测到有效的环境变量 ${envKeyName}（当前为空或仍为模板占位值）。网页端请在 Settings > Secrets 中配置，桌面端请点击顶部菜单「配置与密钥 → 打开 .env」填入真实密钥并重载应用。`
+      `服务端未检测到有效的环境变量 ${envKeyName}（当前为空或仍为占位值）。请在本地 .env 或服务端环境变量中填入真实密钥并重载应用（桌面端可通过顶部菜单「配置与密钥 → 打开密钥配置文件 (.env)」直接编辑）。`
     );
   }
   return { apiKey: rawVal, envKeyName, isKeyless: false };
@@ -168,12 +168,7 @@ function createGeminiClient(
   return new GoogleGenAI({
     apiKey,
     ...(apiVersion ? { apiVersion } : {}),
-    httpOptions: {
-      ...(isDefaultGoogle ? {} : { baseUrl: normalizedBase }),
-      headers: {
-        "User-Agent": "aistudio-build",
-      },
-    },
+    ...(isDefaultGoogle ? {} : { httpOptions: { baseUrl: normalizedBase } }),
   });
 }
 
@@ -205,7 +200,7 @@ function extractApiError(err: unknown): { status: number; message: string } {
   ) {
     return {
       status: status === 401 ? 401 : 403,
-      message: `API 鉴权失败（${detail}），请检查 Settings > Secrets 中对应环境变量的密钥是否正确或具有权限。`,
+      message: `API 鉴权失败（${detail}），请检查环境变量（.env）中对应密钥是否正确或具有访问权限。`,
     };
   }
   if (status === 429 || detail.includes("RESOURCE_EXHAUSTED")) {
@@ -764,7 +759,7 @@ export async function startServer(
   app.use(express.json({ limit: "30mb" }));
 
   /**
-   * Read-only presence check of server-side Secrets environment variable names.
+   * Read-only presence check of server-side environment variable names.
    * Returns ONLY booleans (never secret values).
    */
   app.get("/api/providers/env-status", (req, res) => {
